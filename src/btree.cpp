@@ -155,6 +155,45 @@ void BTreeIndex::insertEntry(const void *key, const RecordId rid) {
 }
 
 // -----------------------------------------------------------------------------
+// traverseTreeToLeaf helper function
+// -----------------------------------------------------------------------------
+void traverseTreeToLeafHelper(PageId rootPageId, const void* key, PageId &leafPageId){
+
+	// cast key
+	int intKey = *((int*) key);
+
+	PageId currentPageId = rootPageId, lastPageId;
+
+	// Tracks the level of tree
+	for(int level = 1; level < this->height; level++){
+
+		// Retrieve page instance from pageId
+		Page* currentPage;
+		this->bufMgr->readPage(this->file, currentPageId, currentPage);
+
+		// Tracks pageId at the previous level to be unpinned after reading
+		lastPageId = currentPageId;
+
+		// Cast regular page to a non leaf node
+		NonLeafNodeInt *currentNode = (NonLeafNodeInt*) currentPage;
+		
+		// Retrieve the index where pageId lies
+		int index = this->lowerBound(currentNode, intKey);
+
+		// Access pageId from non-leaf node pageId array
+		currentPageId = currentNode->pageNoArray[index];
+
+		// Unpins read pageId in the previous BTree level
+		this->bufMgr->unPinPage(this->file, lastPageId, true);
+	}
+
+	// Return leaf page by reference
+	leafPageId = currentPageId;
+	
+}
+
+
+// -----------------------------------------------------------------------------
 // BTreeIndex::startScan
 // -----------------------------------------------------------------------------
 
@@ -162,6 +201,89 @@ void BTreeIndex::startScan(const void* lowValParm,
 	const Operator lowOpParm,
 	const void* highValParm,
 	const Operator highOpParm) {
+
+	// Check if operator used to test the high and low range is valid
+    if(lowOpParm != GT && lowOpParm != GTE && highOpParm != LT && highOpParm != LTE) {
+        throw BadOpcodesException();
+    }
+
+    // Check if lowValue > highValue
+    if(*((int*)lowValParm) > *((int*)highValParm)){
+        throw BadScanrangeException();
+    }
+
+    // Set member variables of BTree
+    this->scanExecuting = true;
+    
+    this->lowValInt = *((int*) lowValParm);
+    if(lowOpParm == GT){
+
+        this->lowValInt += 1;
+    }
+    this->lowOp = GTE;
+
+    this->highValInt = *((int*) highValParm);
+    if(highOpParm == LT){
+        this->highValInt -= 1;
+    }
+    this->highOp = LTE;
+
+    // Index of next entry to be scanned
+    this->nextEntry = 0;
+
+    // Traverse to the leaf node that holds int key <= to searched value
+	traverseTreeToLeafHelper(this->rootPageId, lowValParm, this->currentPageNum);
+
+	// Assign currentPageData member variable as currently scanned page
+	this->bufMgr->readPage(this->file, this->currentPageNum, this->currentPageData);
+
+	// Cast leaf page to leaf node
+	LeafNodeInt* currentNode = (LeafNodeInt*)this->currentPageData;
+
+	// Iterate through the singly linked list of the leaf node level
+	while(true){
+
+		// Check if index of BTree node has reached the end element
+		if(this->nextEntry >= currentNode->sz){
+			
+			// Unpin previously read node page
+			this->bufMgr->unPinPage(this->file, this->currentPageNum, true);
+
+			// Checks if neighboring pageId node has no more key to traverse
+			if(currentNode->rightSibPageNo == Page::INVALID_NUMBER){
+				throw NoSuchKeyFoundException();
+			}
+			// Retrieve neighboring pageId using singly-linked pointer
+			this->currentPageNum = currentNode->rightSibPageNo;
+
+			// Change index of page to 0 to reflect first element in node
+			this->nextEntry = 0;
+			
+			// Reads new subsequent leaf node page
+			this->bufMgr->readPage(this->file, this->currentPageNum, this->currentPageData);
+
+		// Checks if element scanned is smaller than required range
+		}else if(this->lowOpInt > currentNode->keyArray[this->nextEntry]){
+
+			// Move to subsequent elements, as key is still not in range
+			this->nextEntry++;
+
+		// Check if range of scan exceeded
+		}else if(this->highValInt < currentNode->keyArray[this->nextEntry]){
+			
+			// Terminate search 
+			this->bufMgr->unPinPage(this->file, this->currentPageNum, true);
+			this->currentPageNum = Page::INVALID_NUMBER;
+			throw NoSuchKeyFoundException();
+
+		}else{
+			// Scan initialization is valid to commence
+			return;
+		}
+
+
+	}
+
 
 }
 
