@@ -102,8 +102,6 @@ void BTreeIndex::endScan() {
 
 }
 
-}
-
 template <class T>
 int BTreeIndex::lowerBound(T *node, int key) {
 	for (int i = 0; i < node->sz; i++) {
@@ -113,6 +111,8 @@ int BTreeIndex::lowerBound(T *node, int key) {
 }
 
 std::pair<int, PageId> BTreeIndex::insert(int level, PageId pageNo, int key, RecordId rid) {
+
+	std::pair<int, PageId> passUp;
 	
 	// read this page
 	Page *page;
@@ -127,18 +127,23 @@ std::pair<int, PageId> BTreeIndex::insert(int level, PageId pageNo, int key, Rec
 		int idx = this->lowerBound(node, key);
 		if (idx < node->sz && node->keyArray[idx] == key) {
 			node->ridArray[idx] = rid;
-			return {-1, -1};
+			passUp = {-1, -1};
 		}
 
 		// enough space, insert in leaf
-		if (node->sz + 1 <= this->leafOccupancy) this->insertEntryLeaf(node, key, rid);
+		if (node->sz + 1 <= this->leafOccupancy) {
+			this->insertEntryLeaf(node, key, rid);
+			passUp = {-1, -1};
+		}
 
 		// split leaf node
 		else {
-			PageId newPageNo = this->splitLeafNode(node, key, rid);
+			int retKey;
+			PageId retPageNo;
+			this->splitLeafNode(node, key, rid, retKey, retPageNo);
 
-			// pass up middle key and new page no
-			return {node->keyArray[node->sz - 1], newPageNo};
+			// pass up middle key and page no
+			passUp = {retKey, retPageNo};
 		}
 	}
 	
@@ -151,30 +156,33 @@ std::pair<int, PageId> BTreeIndex::insert(int level, PageId pageNo, int key, Rec
 		int idx = this->lowerBound(node, key);
 		int nextPageNo = node->pageNoArray[idx];
 
-		std::pair<int, PageId> ret;
-		ret = this->insert(level + 1, nextPageNo, key, rid);
-
 		// retrieve copied middle key
-		int newKey = ret.first;
-		PageId newPageNo = ret.second;
+		auto &[newKey, newPageNo] = this->insert(level + 1, nextPageNo, key, rid);
 
 		// skip new add
-		if (newKey == -1 && newPageNo == -1) return {-1, -1};
+		if (newKey == -1 && newPageNo == -1) passUp = {-1, -1};
 
 		// enough space, insert in leaf
-		if (node->sz + 1 <= this->nodeOccupancy) insertEntryNonLeaf(node, newKey, newPageNo);
+		if (node->sz + 1 <= this->nodeOccupancy) {
+			insertEntryNonLeaf(node, newKey, newPageNo);
+			passUp = {-1, -1};
+		}
 
 		// split leaf node
 		else {
-			PageId newPageNo2 = splitNonLeafNode(node, key, newPageNo);
+			int retKey;
+			PageId retPageNo;
+			splitNonLeafNode(node, key, newPageNo, retKey, retPageNo);
 
-			// pass up middle key and new page no
-			return {node->keyArray[node->sz - 1], newPageNo2};
+			// pass up middle key and page no
+			passUp = {retKey, retPageNo};
 		}
 	}
 
 	// unpin this page
 	this->bufMgr->unPinPage(this->file, pageNo, true);
+
+	return passUp;
 }
 
 void BTreeIndex::insertEntryLeaf(LeafNodeInt *node, int key, RecordId rid) {
@@ -201,15 +209,15 @@ void BTreeIndex::insertEntryNonLeaf(NonLeafNodeInt *node, int key, PageId pageNo
 	int idx = node->sz - 1;
 	while (idx > 0 && node->keyArray[idx] < node->keyArray[idx-1]) {
 		swap(node->keyArray[idx], node->keyArray[idx-1]);
-		swap(node->pageNoArray[idx], node->pageNoArray[idx-1]);
+		swap(node->pageNoArray[idx + 1], node->pageNoArray[idx]);
 	}
 }
 
-int BTreeIndex::splitLeafNode(LeafNodeInt *node, int key, RecordId rid) {
+void BTreeIndex::splitLeafNode(LeafNodeInt *node, int key, RecordId rid, int &retKey, PageId &retPageNo) {
 
 	// allocate new page
+	int newPageNo;
 	Page *newPage;
-	PageId newPageNo;
 	this->bufMgr->allocPage(this->file, newPageNo, newPage);
 
 	// initialize new node
@@ -226,17 +234,19 @@ int BTreeIndex::splitLeafNode(LeafNodeInt *node, int key, RecordId rid) {
 	if (node->sz <= newNode->sz) this->insertEntryLeaf(node, key, rid);
 	else this->insertEntryLeaf(newNode, key, rid);
 
+	// copy return key and page no
+	retKey = node->keyArray[node->sz - 1];
+	retPageNo = newPageNo;
+
 	// set right sibling page no
 	newNode->rightSibPageNo = node->rightSibPageNo;
 	node->rightSibPageNo = newNode;
 
 	// unpin new page
 	this->bufMgr->unPinPage(this->file, newPageNo, true);
-
-	return newPageNo;
 }
 
-int BTreeIndex::splitNonLeafNode(NonLeafNodeInt *node, int key, PageId pageNo) {
+void BTreeIndex::splitNonLeafNode(NonLeafNodeInt *node, int key, PageId pageNo, int &retKey, PageId &retPageNo) {
 
 	// allocate new page
 	Page *newPage;
@@ -257,8 +267,15 @@ int BTreeIndex::splitNonLeafNode(NonLeafNodeInt *node, int key, PageId pageNo) {
 	if (node->sz <= newNode->sz) this->insertEntryNonLeaf(node, key, pageNo);
 	else this->insertEntryNonLeaf(newNode, key, pageNo);
 
+	newNode->pageNoArray[0] = node->pageNoArray[node->sz];
+	node->sz -= 1;
+
+	// copy return key and page no
+	retKey = node->keyArray[node->sz];
+	retPageNo = newPageNo;
+
 	// unpin new page
 	this->bufMgr->unPinPage(this->file, newPageNo, true);
+}
 
-	return newPageNo;
 }
