@@ -34,19 +34,98 @@ BTreeIndex::BTreeIndex(
 
 	std::ostringstream idxStr;
 	idxStr << relationName << '.' << attrByteOffset;
-	outIndexName = idxStr.str();
+	std::string outIndexName = idxStr.str();
 
+	// create new index file if doesn't exist
+    bool exist = File::exists(outIndexName);
+    BlobFile *indexFile = new BlobFile(outIndexName, !exist);
 
+    // attribute declaration
+    this->file = (File*) indexFile;
+    this->bufMgr = bufMgrIn;
+    this->attributeType = attrType;
+    this->attrByteOffset = attrByteOffset;
+	this->leafOccupancy = (Page::SIZE - sizeof(PageId)) / (sizeof(int) + sizeof(RecordId));
+    this->nodeOccupancy = (Page::SIZE - sizeof(int) - sizeof(PageId) ) / (sizeof(int) + sizeof(PageId));
+    this->scanExecuting = false;
+    this->currentPageNum = Page::INVALID_NUMBER;
+	this->height = 1;
+
+    // if index file exists, read
+    if(exist){
+        Page *headerPage;
+        this->headerPageNum = 1;
+		// reads header page
+        this->bufMgr->readPage(this->file, this->headerPageNum, headerPage);
+
+		// checks if it matches meta page
+        IndexMetaInfo *indexMetaInf = (IndexMetaInfo*)headerPage;
+        if(strcmp(indexMetaInf->relationName, relationName.c_str()) != 0 || indexMetaInf->attrByteOffset != this->attrByteOffset || indexMetaInf->attrType != this->attributeType){
+            throw BadIndexInfoException("File already exists for the corresponding attribute, but values in metapage(relationName, attribute byte offset, attribute type etc.) do not match with values received through constructor parameters.");
+        }
+
+		// updates attribute based on meta page
+        this->rootPageNum = indexMetaInf->rootPageNo;
+		// unpinning
+        this->bufMgr->unPinPage(this->file, this->headerPageNum, true);
+    }
+	// if index file does not exist, alloc
+	else {
+		Page *headerPage;
+		// allocates page
+		this->bufMgr->allocPage(this->file, this->headerPageNum, headerPage);
+
+		// set up meta/header page
+		IndexMetaInfo *indexMetaInf = (IndexMetaInfo*)headerPage;
+		strcpy(indexMetaInf->relationName, relationName.c_str());
+		indexMetaInf->attrByteOffset = attrByteOffset;
+		indexMetaInf->attrType = attrType;
+		indexMetaInf->rootPageNo = this->rootPageNum;
+
+		// initializes root
+		Page *root;
+		this->bufMgr->allocPage(this->file, this->rootPageNum, root);
+		LeafNodeInt *rootNode = (LeafNodeInt*)root;
+		rootNode->rightSibPageNo = Page::INVALID_NUMBER;
+
+		// unpinning
+		this->bufMgr->unPinPage(this->file, this->headerPageNum, true);
+		this->bufMgr->unPinPage(this->file, this->rootPageNum, true); 
+
+		// fill in the tree
+		FileScan *scanner = new FileScan(relationName, bufMgr);
+		try{
+			// iterate through all files till the end
+			while(true){
+				// get rID
+				RecordId rid;
+				scanner->scanNext(rid);
+				std::string record = scanner->getRecord();
+
+				// initialize key
+				int key = *((int*)(record.c_str() + attrByteOffset));
+				
+				// insert entry
+				this->insertEntry(&key, rid);
+			}
+		}
+		catch(EndOfFileException e){};
+	}
 
 }
-
 
 // -----------------------------------------------------------------------------
 // BTreeIndex::~BTreeIndex -- destructor
 // -----------------------------------------------------------------------------
 
 BTreeIndex::~BTreeIndex() {
-	
+	// ensures dirty pages are written to disk
+	this->bufMgr->flushFile(this->file);
+
+	// if index scan has been started
+	if (this->scanExecuting){
+		this->endScan();
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -99,7 +178,19 @@ void BTreeIndex::scanNext(RecordId& outRid) {
 // -----------------------------------------------------------------------------
 //
 void BTreeIndex::endScan() {
+	// if scan hasn't been started
+	if (!this->scanExecuting){
+		throw ScanNotInitializedException();
+	}
 
+	// handles if currentPageNum is not invalid
+	if (this->currentPageNum != Page::INVALID_NUMBER){
+		this->bufMgr->unPinPage(this->file, this->currentPageNum, true);
+        this->currentPageNum = Page::INVALID_NUMBER;
+	}
+
+	// updates scanExecuting
+	this->scanExecuting = false;
 }
 
 template <class T>
