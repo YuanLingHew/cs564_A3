@@ -142,6 +142,11 @@ at this level are just above the leaf nodes. Otherwise set to 0.
 */
 struct NonLeafNodeInt{
   /**
+   * Node occupancy
+   */
+  int sz;
+
+  /**
    * Level of the node in the tree.
    */
 	int level;
@@ -149,7 +154,7 @@ struct NonLeafNodeInt{
   /**
    * Stores keys.
    */
-	int keyArray[ INTARRAYNONLEAFSIZE ];
+	int keyArray[ INTARRAYNONLEAFSIZE ]; = [5, 13, 17, 24]
 
   /**
    * Stores page numbers of child pages which themselves are other non-leaf/leaf nodes in the tree.
@@ -162,6 +167,11 @@ struct NonLeafNodeInt{
  * @brief Structure for all leaf nodes when the key is of INTEGER type.
 */
 struct LeafNodeInt{
+  /**
+   * Node occupancy
+   */
+  int sz;
+
   /**
    * Stores keys.
    */
@@ -290,6 +300,11 @@ class BTreeIndex {
    * High Operator. Can only be LT(<) or LTE(<=).
    */
 	Operator	highOp;
+
+  /**
+   * Height of the tree
+   */
+  int     height;
 
 	
  public:
