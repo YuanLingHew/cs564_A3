@@ -154,7 +154,7 @@ struct NonLeafNodeInt{
   /**
    * Stores keys.
    */
-	int keyArray[ INTARRAYNONLEAFSIZE ]; = [5, 13, 17, 24]
+	int keyArray[ INTARRAYNONLEAFSIZE ];
 
   /**
    * Stores page numbers of child pages which themselves are other non-leaf/leaf nodes in the tree.
@@ -378,7 +378,24 @@ class BTreeIndex {
 	 * @throws ScanNotInitializedException If no scan has been initialized.
 	**/
 	void endScan();
-	
+
+  // ----------------------------------------------------------------------------------------------------
+  template <class T>
+  int lowerBound(T *node, int key);
+
+  std::pair<int, PageId> insert(int level, PageId pageNo, int key, RecordId rid);
+
+  void insertEntryLeaf(LeafNodeInt *node, int key, RecordId rid);
+  void insertEntryNonLeaf(NonLeafNodeInt *node, int key, PageId pageNo);
+  void splitLeafNode(LeafNodeInt *node, int key, RecordId rid, int &retKey, PageId &retPageNo);
+  void splitNonLeafNode(NonLeafNodeInt *node, int key, PageId pageNo, int &retKey, PageId &retPageNo);
+  void initLeafNode(LeafNodeInt *node);
+  void initNonLeafNode(NonLeafNodeInt *node);
+
+  void traverseTreeToLeafHelper(PageId rootPageId, const void* key, PageId &leafPageId);
+
+  void traverse(int level, PageId pageNo);
+
 };
 
 }
