@@ -7,341 +7,393 @@
 
 #pragma once
 
-#include <cstddef>
-#include <stdint.h>
-#include <memory>
+#include <iostream>
 #include <string>
+#include "string.h"
+#include <sstream>
 
-//#include <gtest/gtest.h>
 #include "types.h"
+#include "page.h"
+#include "file.h"
+#include "buffer.h"
 
-namespace badgerdb {
+namespace badgerdb
+{
 
 /**
- * @brief Header metadata in a page.
- *
- * Header metadata in each page which tracks where space has been used and
- * contains a pointer to the next page in the file.
+ * @brief Datatype enumeration type.
  */
-struct PageHeader {
-  /**
-   * Lower bound of the free space.  This is the offset of the first unused byte
-   * after the slot array.
-   */
-  std::uint16_t free_space_lower_bound;
-
-  /**
-   * Upper bound of the free space.  This is the offset of the last unused byte
-   * before the first data record.
-   */
-  std::uint16_t free_space_upper_bound;
-
-  /**
-   * Number of slots currently allocated.  This number may include slots which
-   * are unused but are in the middle of the slot array (due to record
-   * deletions).
-   */
-  SlotId num_slots;
-
-  /**
-   * Number of slots allocated but not in use.
-   */
-  SlotId num_free_slots;
-
-  /**
-   * Number of the page within the file.
-   */
-  PageId current_page_number;
-
-  /**
-   * Number of the next used page in the file.
-   */
-  PageId next_page_number;
-
-  /**
-   * Returns true if this page header is equal to the other.
-   *
-   * @param rhs   Other page header to compare against.
-   * @return  True if the other header is equal to this one.
-   */
-  bool operator==(const PageHeader& rhs) const {
-    return num_slots == rhs.num_slots &&
-        num_free_slots == rhs.num_free_slots &&
-        current_page_number == rhs.current_page_number &&
-        next_page_number == rhs.next_page_number;
-  }
+enum Datatype
+{
+	INTEGER = 0,
+	DOUBLE = 1,
+	STRING = 2
 };
 
 /**
- * @brief Slot metadata that tracks where a record is in the data space.
+ * @brief Scan operations enumeration. Passed to BTreeIndex::startScan() method.
  */
-struct PageSlot {
-  /**
-   * Whether the slot currently holds data.  May be false if this slot's
-   * record has been deleted after insertion.
-   */
-  bool used;
-
-  /**
-   * Offset of the data item in the page.
-   */
-  std::uint16_t item_offset;
-
-  /**
-   * Length of the data item in this slot.
-   */
-  std::uint16_t item_length;
+enum Operator
+{ 
+	LT, 	/* Less Than */
+	LTE,	/* Less Than or Equal to */
+	GTE,	/* Greater Than or Equal to */
+	GT		/* Greater Than */
 };
 
-class PageIterator;
 
 /**
- * @brief Class which represents a fixed-size database page containing records.
- *
- * A page is a fixed-size unit of data storage.  Each page holds zero or more
- * records, which consist of arbitrary binary data.  Records are placed into
- * slots and identified by a RecordId.  Although a record's actual contents may
- * be moved on the page, accessing a record by its slot is consistent.
- *
- * @warning This class is not threadsafe.
+ * @brief Number of key slots in B+Tree leaf for INTEGER key.
  */
-class Page {
- public:
+//                                                  sibling ptr             key               rid
+const  int INTARRAYLEAFSIZE = ( Page::SIZE - sizeof( PageId ) ) / ( sizeof( int ) + sizeof( RecordId ) );
+
+/**
+ * @brief Number of key slots in B+Tree non-leaf for INTEGER key.
+ */
+//                                                     level     extra pageNo                  key       pageNo
+const  int INTARRAYNONLEAFSIZE = ( Page::SIZE - sizeof( int ) - sizeof( PageId ) ) / ( sizeof( int ) + sizeof( PageId ) );
+
+/**
+ * @brief Structure to store a key-rid pair. It is used to pass the pair to functions that 
+ * add to or make changes to the leaf node pages of the tree. Is templated for the key member.
+ */
+template <class T>
+class RIDKeyPair{
+public:
+	RecordId rid;
+	T key;
+	void set( RecordId r, T k)
+	{
+		rid = r;
+		key = k;
+	}
+};
+
+/**
+ * @brief Structure to store a key page pair which is used to pass the key and page to functions that make 
+ * any modifications to the non leaf pages of the tree.
+*/
+template <class T>
+class PageKeyPair{
+public:
+	PageId pageNo;
+	T key;
+	void set( int p, T k)
+	{
+		pageNo = p;
+		key = k;
+	}
+};
+
+/**
+ * @brief Overloaded operator to compare the key values of two rid-key pairs
+ * and if they are the same compares to see if the first pair has
+ * a smaller rid.pageNo value.
+*/
+template <class T>
+bool operator<( const RIDKeyPair<T>& r1, const RIDKeyPair<T>& r2 )
+{
+	if( r1.key != r2.key )
+		return r1.key < r2.key;
+	else
+		return r1.rid.page_number < r2.rid.page_number;
+}
+
+/**
+ * @brief The meta page, which holds metadata for Index file, is always first page of the btree index file and is cast
+ * to the following structure to store or retrieve information from it.
+ * Contains the relation name for which the index is created, the byte offset
+ * of the key value on which the index is made, the type of the key and the page no
+ * of the root page. Root page starts as page 2 but since a split can occur
+ * at the root the root page may get moved up and get a new page no.
+*/
+struct IndexMetaInfo{
   /**
-   * Page size in bytes.  If this is changed, database files created with a
-   * different page size value will be unreadable by the resulting binaries.
+   * Name of base relation.
    */
-  static const std::size_t SIZE = 8192;
+	char relationName[20];
 
   /**
-   * Size of page free space area in bytes.
+   * Offset of attribute, over which index is built, inside the record stored in pages.
    */
-  static const std::size_t DATA_SIZE = SIZE - sizeof(PageHeader);
+	int attrByteOffset;
 
   /**
-   * Number of page indicating that it's invalid.
+   * Type of the attribute over which index is built.
    */
-  static const PageId INVALID_NUMBER = 0;
+	Datatype attrType;
 
   /**
-   * Number of slot indicating that it's invalid.
+   * Page number of root page of the B+ Tree inside the file index file.
    */
-  static const SlotId INVALID_SLOT = 0;
+	PageId rootPageNo;
+};
+
+/*
+Each node is a page, so once we read the page in we just cast the pointer to the page to this struct and use it to access the parts
+These structures basically are the format in which the information is stored in the pages for the index file depending on what kind of 
+node they are. The level memeber of each non leaf structure seen below is set to 1 if the nodes 
+at this level are just above the leaf nodes. Otherwise set to 0.
+*/
+
+/**
+ * @brief Structure for all non-leaf nodes when the key is of INTEGER type.
+*/
+struct NonLeafNodeInt{
+  /**
+   * Node occupancy
+   */
+  int sz;
 
   /**
-   * Constructs a new, uninitialized page.
+   * Level of the node in the tree.
    */
-  Page();
+	int level;
 
   /**
-   * Inserts a new record into the page.
-   *
-   * @param record_data  Bytes that compose the record.
-   * @return  ID of the newly inserted record.
+   * Stores keys.
    */
-  RecordId insertRecord(const std::string& record_data);
+	int keyArray[ INTARRAYNONLEAFSIZE ];
 
   /**
-   * Returns the record with the given ID.  Returned data is a copy of what is
-   * stored on the page; use updateRecord to change it.
-   *
-   * @see updateRecord
-   * @param record_id  ID of the record to return.
-   * @return  The record.
+   * Stores page numbers of child pages which themselves are other non-leaf/leaf nodes in the tree.
    */
-  std::string getRecord(const RecordId& record_id) const;
+	PageId pageNoArray[ INTARRAYNONLEAFSIZE + 1 ];
+};
+
+
+/**
+ * @brief Structure for all leaf nodes when the key is of INTEGER type.
+*/
+struct LeafNodeInt{
+  /**
+   * Node occupancy
+   */
+  int sz;
 
   /**
-   * Updates the record with the given ID, replacing its data with a new
-   * version.  This is equivalent to deleting the old record and inserting a
-   * new one, with the exception that the record ID will not change.
-   *
-   * @param record_id   ID of record to update.
-   * @param record_data Updated bytes that compose the record.
+   * Stores keys.
    */
-  void updateRecord(const RecordId& record_id, const std::string& record_data);
+	int keyArray[ INTARRAYLEAFSIZE ];
 
   /**
-   * Deletes the record with the given ID.  Page is compacted upon delete to
-   * ensure that data of all records is contiguous.  Slot array is compacted if
-   * the slot deleted is at the end of the slot array.
-   *
-   * @param record_id   ID of the record to delete.
+   * Stores RecordIds.
    */
-  void deleteRecord(const RecordId& record_id);
+	RecordId ridArray[ INTARRAYLEAFSIZE ];
 
   /**
-   * Returns true if the page has enough free space to hold the given data.
-   *
-   * @param record_data Bytes that compose the record.
-   * @return  Whether the page can hold the data.
+   * Page number of the leaf on the right side.
+	 * This linking of leaves allows to easily move from one leaf to the next leaf during index scan.
    */
-  bool hasSpaceForRecord(const std::string& record_data) const;
+	PageId rightSibPageNo;
+};
 
-  /**
-   * Returns this page's free space in bytes.
-   *
-   * @return  Free space in bytes.
-   */
-  std::uint16_t getFreeSpace() const { return header_.free_space_upper_bound -
-                                              header_.free_space_lower_bound; }
 
-  /**
-   * Returns this page's number in its file.
-   *
-   * @return  Page number.
-   */
-  PageId page_number() const { return header_.current_page_number; }
-
-  /**
-   * Returns the number of the next used page this page in its file.
-   *
-   * @return  Page number of next used page in file.
-   */
-  PageId next_page_number() const { return header_.next_page_number; }
-
-  /**
-   * Returns an iterator at the first record in the page.
-   *
-   * @return  Iterator at first record of page.
-   */
-  PageIterator begin();
-
-  /**
-   * Returns an iterator representing the record after the last record in the
-   * page.  This iterator should not be dereferenced.
-   *
-   * @return  Iterator representing record after the last record in the page.
-   */
-  PageIterator end();
+/**
+ * @brief BTreeIndex class. It implements a B+ Tree index on a single attribute of a
+ * relation. This index supports only one scan at a time.
+*/
+class BTreeIndex {
 
  private:
-  /**
-   * Initializes this page as a new page with no header information or data.
-   */
-  void initialize();
 
   /**
-   * Sets this page's number in its file.
+   * File object for the index file.
+   */
+	File		*file;
+
+  /**
+   * Buffer Manager Instance.
+   */
+	BufMgr	*bufMgr;
+
+  /**
+   * Page number of meta page.
+   */
+	PageId	headerPageNum;
+
+  /**
+   * page number of root page of B+ tree inside index file.
+   */
+	PageId	rootPageNum;
+
+  /**
+   * Datatype of attribute over which index is built.
+   */
+	Datatype	attributeType;
+
+  /**
+   * Offset of attribute, over which index is built, inside records. 
+   */
+	int 		attrByteOffset;
+
+  /**
+   * Number of keys in leaf node, depending upon the type of key.
+   */
+	int			leafOccupancy;
+
+  /**
+   * Number of keys in non-leaf node, depending upon the type of key.
+   */
+	int			nodeOccupancy;
+
+
+	// MEMBERS SPECIFIC TO SCANNING
+
+  /**
+   * True if an index scan has been started.
+   */
+	bool		scanExecuting;
+
+  /**
+   * Index of next entry to be scanned in current leaf being scanned.
+   */
+	int			nextEntry;
+
+  /**
+   * Page number of current page being scanned.
+   */
+	PageId	currentPageNum;
+
+  /**
+   * Current Page being scanned.
+   */
+	Page		*currentPageData;
+
+  /**
+   * Low INTEGER value for scan.
+   */
+	int			lowValInt;
+
+  /**
+   * Low DOUBLE value for scan.
+   */
+	double	lowValDouble;
+
+  /**
+   * Low STRING value for scan.
+   */
+	std::string	lowValString;
+
+  /**
+   * High INTEGER value for scan.
+   */
+	int			highValInt;
+
+  /**
+   * High DOUBLE value for scan.
+   */
+	double	highValDouble;
+
+  /**
+   * High STRING value for scan.
+   */
+	std::string highValString;
+	
+  /**
+   * Low Operator. Can only be GT(>) or GTE(>=).
+   */
+	Operator	lowOp;
+
+  /**
+   * High Operator. Can only be LT(<) or LTE(<=).
+   */
+	Operator	highOp;
+
+  /**
+   * Height of the tree
+   */
+  int     height;
+
+	
+ public:
+
+  /**
+   * BTreeIndex Constructor. 
+	 * Check to see if the corresponding index file exists. If so, open the file.
+	 * If not, create it and insert entries for every tuple in the base relation using FileScan class.
    *
-   * @param page_number   Number of page in file.
+   * @param relationName        Name of file.
+   * @param outIndexName        Return the name of index file.
+   * @param bufMgrIn						Buffer Manager Instance
+   * @param attrByteOffset			Offset of attribute, over which index is to be built, in the record
+   * @param attrType						Datatype of attribute over which index is built
    */
-  void set_page_number(const PageId new_page_number) {
-    header_.current_page_number = new_page_number;
-  }
+	BTreeIndex(const std::string & relationName, std::string & outIndexName,
+						BufMgr *bufMgrIn,	const int attrByteOffset,	const Datatype attrType);
+	
 
   /**
-   * Sets the number of the next used page after this page in its file.
-   *
-   * @param next_page_number  Page number of next used page in file.
-   */
-  void set_next_page_number(const PageId new_next_page_number) {
-    header_.next_page_number = new_next_page_number;
-  }
+   * BTreeIndex Destructor. 
+	 * End any initialized scan, flush index file, after unpinning any pinned pages, from the buffer manager
+	 * and delete file instance thereby closing the index file.
+	 * Destructor should not throw any exceptions. All exceptions should be caught in here itself. 
+	 * */
+	~BTreeIndex();
+
 
   /**
-   * Deletes the record with the given ID.  Page is compacted upon delete to
-   * ensure that data of all records is contiguous.  Slot array is compacted if
-   * the slot deleted is at the end of the slot array and
-   * <allow_slot_compaction> is set.
-   *
-   * @param record_id             ID of the record to delete.
-   * @param allow_slot_compaction If true, the slot array will be compacted if
-   *                              possible.
-   */
-  void deleteRecord(const RecordId& record_id,
-                    const bool allow_slot_compaction);
+	 * Insert a new entry using the pair <value,rid>. 
+	 * Start from root to recursively find out the leaf to insert the entry in. The insertion may cause splitting of leaf node.
+	 * This splitting will require addition of new leaf page number entry into the parent non-leaf, which may in-turn get split.
+	 * This may continue all the way upto the root causing the root to get split. If root gets split, metapage needs to be changed accordingly.
+	 * Make sure to unpin pages as soon as you can.
+   * @param key			Key to insert, pointer to integer/double/char string
+   * @param rid			Record ID of a record whose entry is getting inserted into the index.
+	**/
+	void insertEntry(const void* key, const RecordId rid);
+
 
   /**
-   * Returns the slot with the given number.  This method will return
-   * unallocated slots if requested; it is up to the caller to ensure they
-   * have a valid slot number.
-   *
-   * @param slot_number   Number of slot to retrieve.
-   * @return  Pointer to the slot.
-   */
-  PageSlot* getSlot(const SlotId slot_number);
+	 * Begin a filtered scan of the index.  For instance, if the method is called 
+	 * using ("a",GT,"d",LTE) then we should seek all entries with a value 
+	 * greater than "a" and less than or equal to "d".
+	 * If another scan is already executing, that needs to be ended here.
+	 * Set up all the variables for scan. Start from root to find out the leaf page that contains the first RecordID
+	 * that satisfies the scan parameters. Keep that page pinned in the buffer pool.
+   * @param lowVal	Low value of range, pointer to integer / double / char string
+   * @param lowOp		Low operator (GT/GTE)
+   * @param highVal	High value of range, pointer to integer / double / char string
+   * @param highOp	High operator (LT/LTE)
+   * @throws  BadOpcodesException If lowOp and highOp do not contain one of their their expected values 
+   * @throws  BadScanrangeException If lowVal > highval
+	 * @throws  NoSuchKeyFoundException If there is no key in the B+ tree that satisfies the scan criteria.
+	**/
+	void startScan(const void* lowVal, const Operator lowOp, const void* highVal, const Operator highOp);
+
 
   /**
-   * Returns the slot with the given number.  This method will return
-   * unallocated slots if requested; it is up to the caller to ensure they
-   * have a valid slot number.
-   * 
-   * @param slot_number   Number of slot to retrieve.
-   * @return  The slot.
-   */
-  const PageSlot& getSlot(const SlotId slot_number) const;
+	 * Fetch the record id of the next index entry that matches the scan.
+	 * Return the next record from current page being scanned. If current page has been scanned to its entirety, move on to the right sibling of current page, if any exists, to start scanning that page. Make sure to unpin any pages that are no longer required.
+   * @param outRid	RecordId of next record found that satisfies the scan criteria returned in this
+	 * @throws ScanNotInitializedException If no scan has been initialized.
+	 * @throws IndexScanCompletedException If no more records, satisfying the scan criteria, are left to be scanned.
+	**/
+	void scanNext(RecordId& outRid);  // returned record id
+
 
   /**
-   * Returns the slot number of an available slot.  If no slots are available
-   * to be reused, allocates a new slot.  Updates available slot count in the
-   * header metadata, but does not mark returned slot as used.  If a new slot is
-   * allocated, updates the free space lower bound.
-   *
-   * Callers are responsible for making sure there is enough space to allocate a
-   * new slot before calling this method.
-   *
-   * Since the returned slot is not marked as used, callers must take care to
-   * fill the slot or mark it used before someone else calls this method.
-   *
-   * @return  Slot number of an unused slot.
-   */
-  SlotId getAvailableSlot();
+	 * Terminate the current scan. Unpin any pinned pages. Reset scan specific variables.
+	 * @throws ScanNotInitializedException If no scan has been initialized.
+	**/
+	void endScan();
 
-  /**
-   * Inserts record data into the given slot.  The slot should not be currently
-   * in use.  <slot_number> must be less than <header_.num_slots>.
-   *
-   * Callers are responsible for making sure there is enough space to hold the
-   * record before calling this method.
-   *
-   * @param slot_number   Number of slot to insert record into.
-   * @param record_data   Bytes that compose the record.
-   * @throws  InvalidSlotException  Thrown when given slot number refers to an
-   *                                unallocated slot.
-   * @throws  SlotInUseException  Thrown when given slot is in use.
-   */
-  void insertRecordInSlot(const SlotId slot_number,
-                          const std::string& record_data);
+  // ----------------------------------------------------------------------------------------------------
+  template <class T>
+  int lowerBound(T *node, int key);
 
-  /**
-   * Throws an exception if the given record ID is not valid for this page
-   * (i.e., it has the right page number and the slot it references is in use).
-   *
-   * @param record_id   Record ID to validate.
-   * @throws  InvalidRecordException  Thrown if the ID has a bad page or slot
-   *                                  number.
-   */
-  void validateRecordId(const RecordId& record_id) const;
+  std::pair<int, PageId> insert(int level, PageId pageNo, int key, RecordId rid);
 
-  /**
-   * Returns whether the page is in use or is a free page.
-   *
-   * @return  True if page is in use; false if page is free.
-   */
-  bool isUsed() const { return page_number() != INVALID_NUMBER; }
+  void insertEntryLeaf(LeafNodeInt *node, int key, RecordId rid);
+  void insertEntryNonLeaf(NonLeafNodeInt *node, int key, PageId pageNo);
+  void splitLeafNode(LeafNodeInt *node, int key, RecordId rid, int &retKey, PageId &retPageNo);
+  void splitNonLeafNode(NonLeafNodeInt *node, int key, PageId pageNo, int &retKey, PageId &retPageNo);
+  void initLeafNode(LeafNodeInt *node);
+  void initNonLeafNode(NonLeafNodeInt *node);
 
-  /**
-   * Header metadata.
-   */
-  PageHeader header_;
+  void traverseTreeToLeafHelper(PageId rootPageId, const void* key, PageId &leafPageId);
 
-  /**
-   * Data stored on the page.  Includes bookkeeping information about slots as
-   * well as actual content.
-   */
-
-  char data_[DATA_SIZE];
-
-  friend class File;
-  friend class PageFile;
-  friend class BlobFile;
-  friend class PageIterator;
 };
-
-static_assert(Page::SIZE > sizeof(PageHeader),
-              "Page size must be large enough to hold header and data.");
-static_assert(Page::DATA_SIZE > 0,
-              "Page must have some space to hold data.");
 
 }
