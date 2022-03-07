@@ -253,7 +253,7 @@ void BTreeIndex::startScan(const void* lowValParm,
 			if(currentNode->rightSibPageNo == Page::INVALID_NUMBER){
 				throw NoSuchKeyFoundException();
 			}
-			// Retrieve neighboring pageId using singly-linked pointer
+			// Retrieve neighboring sibling pageId using singly-linked pointer
 			this->currentPageNum = currentNode->rightSibPageNo;
 
 			// Change index of page to 0 to reflect first element in node
@@ -281,9 +281,7 @@ void BTreeIndex::startScan(const void* lowValParm,
 			return;
 		}
 
-
 	}
-
 
 }
 
@@ -293,6 +291,60 @@ void BTreeIndex::startScan(const void* lowValParm,
 
 void BTreeIndex::scanNext(RecordId& outRid) {
 
+	// Check if scan process has been commenced and initialized 
+	if(!this->scanExecuting){
+		throw ScanNotInitializedException();
+	}
+
+	// Check if scan page has ended
+	if(this-> currentPageNum == Page::INVALID_NUMBER){
+		throw IndexScanCompletedException();
+	}
+
+	// Cast leaf page to leaf node
+	LeafNodeInt* currentNode = (LeafNodeInt*)this->currentPageData;
+
+	while(true){
+
+		// Check if index of BTree node has reached the end element
+		if(this->nextEntry >= currentNode->sz){
+			
+			// Unpin previously read node page
+			this->bufMgr->unPinPage(this->file, this->currentPageNum, true);
+
+			// Checks if neighboring pageId node has no more key to traverse
+			if(currentNode->rightSibPageNo == Page::INVALID_NUMBER){
+				return;
+			}
+			// Retrieve neighboring sibling pageId using singly-linked pointer
+			this->currentPageNum = currentNode->rightSibPageNo;
+
+			// Change index of page to 0 to reflect first element in node
+			this->nextEntry = 0;
+			
+			// Reads new subsequent leaf node page
+			this->bufMgr->readPage(this->file, this->currentPageNum, this->currentPageData);
+
+		// Checks if element scanned is smaller than required range
+		}else if(this->lowOpInt > currentNode->keyArray[this->nextEntry]){
+
+			// Move to subsequent elements, as key is still not in range
+			this->nextEntry++;
+
+		// Check if range of scan exceeded
+		}else if(this->highValInt < currentNode->keyArray[this->nextEntry]){
+			
+			// Terminate search 
+			this->bufMgr->unPinPage(this->file, this->currentPageNum, true);
+			this->currentPageNum = Page::INVALID_NUMBER;
+			return;
+
+		}else{
+			// Obtain the record in page
+			outRid = currentNode->ridArray[this->nextEntry++];
+			return;
+		}
+	}
 }
 
 // -----------------------------------------------------------------------------
