@@ -37,38 +37,38 @@ BTreeIndex::BTreeIndex(
 	std::string outIndexName = idxStr.str();
 
 	// create new index file if doesn't exist
-    bool exist = File::exists(outIndexName);
-    BlobFile *indexFile = new BlobFile(outIndexName, !exist);
+	bool exist = File::exists(outIndexName);
+	BlobFile *indexFile = new BlobFile(outIndexName, !exist);
 
-    // attribute declaration
-    this->file = (File*) indexFile;
-    this->bufMgr = bufMgrIn;
-    this->attributeType = attrType;
-    this->attrByteOffset = attrByteOffset;
+	// attribute declaration
+	this->file = (File*) indexFile;
+	this->bufMgr = bufMgrIn;
+	this->attributeType = attrType;
+	this->attrByteOffset = attrByteOffset;
 	this->leafOccupancy = (Page::SIZE - sizeof(PageId)) / (sizeof(int) + sizeof(RecordId));
-    this->nodeOccupancy = (Page::SIZE - sizeof(int) - sizeof(PageId) ) / (sizeof(int) + sizeof(PageId));
-    this->scanExecuting = false;
-    this->currentPageNum = Page::INVALID_NUMBER;
+	this->nodeOccupancy = (Page::SIZE - sizeof(int) - sizeof(PageId) ) / (sizeof(int) + sizeof(PageId));
+	this->scanExecuting = false;
+	this->currentPageNum = Page::INVALID_NUMBER;
 	this->height = 1;
 
-    // if index file exists, read
-    if(exist){
-        Page *headerPage;
-        this->headerPageNum = 1;
+	// if index file exists, read
+	if(exist){
+		Page *headerPage;
+		this->headerPageNum = 1;
 		// reads header page
-        this->bufMgr->readPage(this->file, this->headerPageNum, headerPage);
+		this->bufMgr->readPage(this->file, this->headerPageNum, headerPage);
 
 		// checks if it matches meta page
-        IndexMetaInfo *indexMetaInf = (IndexMetaInfo*)headerPage;
-        if(strcmp(indexMetaInf->relationName, relationName.c_str()) != 0 || indexMetaInf->attrByteOffset != this->attrByteOffset || indexMetaInf->attrType != this->attributeType){
-            throw BadIndexInfoException("File already exists for the corresponding attribute, but values in metapage(relationName, attribute byte offset, attribute type etc.) do not match with values received through constructor parameters.");
-        }
+		IndexMetaInfo *indexMetaInf = (IndexMetaInfo*)headerPage;
+		if(strcmp(indexMetaInf->relationName, relationName.c_str()) != 0 || indexMetaInf->attrByteOffset != this->attrByteOffset || indexMetaInf->attrType != this->attributeType){
+				throw BadIndexInfoException("File already exists for the corresponding attribute, but values in metapage(relationName, attribute byte offset, attribute type etc.) do not match with values received through constructor parameters.");
+		}
 
 		// updates attribute based on meta page
-        this->rootPageNum = indexMetaInf->rootPageNo;
+		this->rootPageNum = indexMetaInf->rootPageNo;
 		// unpinning
-        this->bufMgr->unPinPage(this->file, this->headerPageNum, true);
-    }
+		this->bufMgr->unPinPage(this->file, this->headerPageNum, true);
+	}
 	// if index file does not exist, alloc
 	else {
 		Page *headerPage;
@@ -134,24 +134,35 @@ BTreeIndex::~BTreeIndex() {
 
 void BTreeIndex::insertEntry(const void *key, const RecordId rid) {
 	int _key = *(int*)_key;
-	this->insert(this->rootPageNum, _key, rid);
+  auto &[newKey, newPageNo] = this->insert(this->rootPageNum, _key, rid);
 
-	// // get path to leaf
-	// std::vector<PageId> searchPath;
-	// search(key, searchPath);
-	// int length = (int)searchPath.size();
+	if (newKey == -1 && newPageNo == -1) return ;
 
-	// // if the key is already  existed, replace its record id
-	// if (updateExistingKey(searchPath[length - 1], key, rid)) return ;
+	// allocate new root
+	Page *page;
+	PageId pageNo;
+	this->bufMgr->allocPage(this->file, pageNo, page);
 
-	// // insert in btree
-	// for (int i = length - 2; i >= 0; i--) {
-	// 	int pageNo = searchPath[i];
-	// 	Page *page;
-	// 	this->bufMgr->readPage(this->file, pageNo, page);
-		
-	// }
+	NonLeafNodeInt *node = (NonLeafNodeInt*)page;
+	node->sz = 1;
+	node->level = this->height;
+	node->keyArray[0] = newKey;
+	node->pageNoArray[0] = this->rootPageNum;
+	node->pageNoArray[1] = newPageNo;
 
+	// update attrs.
+	this->height += 1;
+	this->rootPageNum = pageNo;
+
+	// update metas
+	Page *headerPage;
+	this->bufMgr->readPage(this->file, this->headerPageNum, headerPage);
+	IndexMetaInfo *metaInfo = (IndexMetaInfo*)headerPage;
+	metaInfo->rootPageNo = pageNo;
+	this->bufMgr->unPinPage(this->file, this->headerPageNum, true);
+
+	// unpin new root
+	this->bufMgr->unPinPage(this->file, pageNo, true);
 }
 
 // -----------------------------------------------------------------------------
