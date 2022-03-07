@@ -394,6 +394,8 @@ class BTreeIndex {
 
   void traverseTreeToLeafHelper(PageId rootPageId, const void* key, PageId &leafPageId);
 
+  void traverse(int level, PageId pageNo);
+
 };
 
 }

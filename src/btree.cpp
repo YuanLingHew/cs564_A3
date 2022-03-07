@@ -16,6 +16,9 @@
 #include "exceptions/file_not_found_exception.h"
 #include "exceptions/end_of_file_exception.h"
 
+int DEBUG = 0;
+int SHOW = 0;
+int DEBUG_SCAN = 0;
 
 // #define DEBUG
 
@@ -25,12 +28,8 @@ namespace badgerdb {
 // BTreeIndex::BTreeIndex -- Constructor
 // -----------------------------------------------------------------------------
 
-BTreeIndex::BTreeIndex(
-	const std::string & relationName,
-	std::string & outIndexName,
-	BufMgr *bufMgrIn,
-	const int attrByteOffset,
-	const Datatype attrType) {
+BTreeIndex::BTreeIndex(const std::string & relationName, std::string & outIndexName,
+											 BufMgr *bufMgrIn, const int attrByteOffset, const Datatype attrType) {
 
 	std::ostringstream idxStr;
 	idxStr << relationName << '.' << attrByteOffset;
@@ -49,10 +48,11 @@ BTreeIndex::BTreeIndex(
 	this->nodeOccupancy = (Page::SIZE - sizeof(int) - sizeof(PageId) ) / (sizeof(int) + sizeof(PageId));
 	this->scanExecuting = false;
 	this->currentPageNum = Page::INVALID_NUMBER;
-	this->height = 1;
+	this->height = 0;
 
 	// if index file exists, read
 	if(exist){
+
 		Page *headerPage;
 		this->headerPageNum = 1;
 		// reads header page
@@ -86,7 +86,7 @@ BTreeIndex::BTreeIndex(
 		Page *root;
 		this->bufMgr->allocPage(this->file, this->rootPageNum, root);
 		LeafNodeInt *rootNode = (LeafNodeInt*)root;
-		rootNode->rightSibPageNo = Page::INVALID_NUMBER;
+		this->initLeafNode(rootNode);
 
 		// unpinning
 		this->bufMgr->unPinPage(this->file, this->headerPageNum, true);
@@ -104,14 +104,65 @@ BTreeIndex::BTreeIndex(
 
 				// initialize key
 				int key = *((int*)(record.c_str() + attrByteOffset));
+
+				if (DEBUG) std::cout << "insert key " << key << std::endl;
 				
 				// insert entry
 				this->insertEntry(&key, rid);
+
 			}
 		}
 		catch(EndOfFileException e){};
 	}
+	
 
+	if (DEBUG) std::cout << "----------" << std::endl;
+
+	// if (SHOW) this->traverse(0, this->rootPageNum);
+
+}
+
+void BTreeIndex::traverse(int level, PageId pageNo) {
+
+	Page *page;
+	this->bufMgr->readPage(this->file, pageNo, page);
+	
+
+	if (level == this->height) {
+		LeafNodeInt *node = (LeafNodeInt*)page;
+
+		// std::cout << "------------------" << std::endl;
+		// std::cout << "| traverse leaf " << std::endl;
+		// std::cout << "| level: " << level << std::endl;
+		// std::cout << "| pageNo: " << pageNo << std::endl;
+		// std::cout << "| size: " << node->sz << std::endl;
+		// std::cout << "------------------" << std::endl;
+
+		for (int i = 0; i < node->sz; i++) {
+			std::cout << node->keyArray[i] << "(" << pageNo << ")" << " ";
+		}
+
+		this->bufMgr->unPinPage(this->file, pageNo, true);
+		
+	}
+	else {
+		NonLeafNodeInt *node = (NonLeafNodeInt*)page;
+
+		// std::cout << "------------------" << std::endl;
+		// std::cout << "| traverse nonleaf " << std::endl;
+		// std::cout << "| level: " << level << std::endl;
+		// std::cout << "| pageNo: " << pageNo << std::endl;
+		// std::cout << "| size: " << node->sz << std::endl;
+		// std::cout << "------------------" << std::endl;
+
+		for (int i = 0; i < node->sz; i++) {
+			traverse(level+1, node->pageNoArray[i]);
+			std::cout << node->keyArray[i] << "(" << pageNo << ")" << " ";
+		}
+
+		this->bufMgr->unPinPage(this->file, pageNo, true);
+
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -119,13 +170,12 @@ BTreeIndex::BTreeIndex(
 // -----------------------------------------------------------------------------
 
 BTreeIndex::~BTreeIndex() {
-	// ensures dirty pages are written to disk
-	this->bufMgr->flushFile(this->file);
-
 	// if index scan has been started
 	if (this->scanExecuting){
 		this->endScan();
 	}
+	// ensures dirty pages are written to disk
+	this->bufMgr->flushFile(this->file);
 }
 
 // -----------------------------------------------------------------------------
@@ -133,10 +183,26 @@ BTreeIndex::~BTreeIndex() {
 // -----------------------------------------------------------------------------
 
 void BTreeIndex::insertEntry(const void *key, const RecordId rid) {
-	int _key = *(int*)key;
-  auto [newKey, newPageNo] = this->insert(0, this->rootPageNum, _key, rid);
+	int _key = *((int*)key);
 
-	if (newKey == -1 && newPageNo == -1) return ;
+	if (DEBUG) {
+		std::cout << "---------------------------------" << std::endl;
+		std::cout << "    insert " << _key << std::endl;
+		std::cout << "    rootPageNum " << this->rootPageNum << std::endl;
+		std::cout << "---------------------------------" << std::endl;
+	}
+
+	std::pair<int, PageId> ret = this->insert(0, this->rootPageNum, _key, rid);
+	int newKey = ret.first;
+	PageId newPageNo = ret.second;
+
+	if (newKey == -1 && newPageNo == Page::INVALID_NUMBER) return ;
+
+	if (DEBUG) {
+		std::cout << "new root!" << std::endl;
+		std::cout << "newKey: " << newKey << std::endl;
+		std::cout << "newPageNo: " << newPageNo << std::endl;
+	}
 
 	// allocate new root
 	Page *page;
@@ -176,7 +242,7 @@ void BTreeIndex::traverseTreeToLeafHelper(PageId rootPageId, const void* key, Pa
 	PageId currentPageId = rootPageId, lastPageId;
 
 	// Tracks the level of tree
-	for(int level = 1; level < this->height; level++){
+	for(int level = 0; level < this->height; level++){
 
 		// Retrieve page instance from pageId
 		Page* currentPage;
@@ -214,35 +280,45 @@ void BTreeIndex::startScan(const void* lowValParm,
 	const Operator highOpParm) {
 
 	// Check if operator used to test the high and low range is valid
-    if(lowOpParm != GT && lowOpParm != GTE && highOpParm != LT && highOpParm != LTE) {
-        throw BadOpcodesException();
-    }
+	if(lowOpParm != GT && lowOpParm != GTE && highOpParm != LT && highOpParm != LTE) {
+			throw BadOpcodesException();
+	}
 
-    // Check if lowValue > highValue
-    if(*((int*)lowValParm) > *((int*)highValParm)){
-        throw BadScanrangeException();
-    }
+	// Check if lowValue > highValue
+	if(*((int*)lowValParm) > *((int*)highValParm)){
+			throw BadScanrangeException();
+	}
 
-    // Set member variables of BTree
-    this->scanExecuting = true;
-    
-    this->lowValInt = *((int*) lowValParm);
-    if(lowOpParm == GT){
+	if (DEBUG_SCAN) {
+		std::cout << "startScan" << std::endl;
+		if (lowOpParm == GT) std::cout << "(";
+		if (lowOpParm == GTE) std::cout << "[";
+		std::cout << *(int*)lowValParm << ", " << *(int*)highValParm;
+		if (highOpParm == LT) std::cout << ")";
+		if (highOpParm == LTE) std::cout << "]";
+		std::cout << std::endl;
+	}
 
-        this->lowValInt += 1;
-    }
-    this->lowOp = GTE;
+	// Set member variables of BTree
+	this->scanExecuting = true;
+	
+	this->lowValInt = *((int*) lowValParm);
+	if(lowOpParm == GT){
 
-    this->highValInt = *((int*) highValParm);
-    if(highOpParm == LT){
-        this->highValInt -= 1;
-    }
-    this->highOp = LTE;
+			this->lowValInt += 1;
+	}
+	this->lowOp = GTE;
 
-    // Index of next entry to be scanned
-    this->nextEntry = 0;
+	this->highValInt = *((int*) highValParm);
+	if(highOpParm == LT){
+			this->highValInt -= 1;
+	}
+	this->highOp = LTE;
 
-    // Traverse to the leaf node that holds int key <= to searched value
+	// Index of next entry to be scanned
+	this->nextEntry = 0;
+
+	// Traverse to the leaf node that holds int key <= to searched value
 	this->traverseTreeToLeafHelper(this->rootPageNum, lowValParm, this->currentPageNum);
 
 	// Assign currentPageData member variable as currently scanned page
@@ -260,12 +336,13 @@ void BTreeIndex::startScan(const void* lowValParm,
 			// Unpin previously read node page
 			this->bufMgr->unPinPage(this->file, this->currentPageNum, true);
 
-			// Checks if neighboring pageId node has no more key to traverse
-			if(currentNode->rightSibPageNo == Page::INVALID_NUMBER){
-				throw NoSuchKeyFoundException();
-			}
 			// Retrieve neighboring sibling pageId using singly-linked pointer
 			this->currentPageNum = currentNode->rightSibPageNo;
+
+			// Checks if neighboring pageId node has no more key to traverse
+			if(this->currentPageNum == 0){
+				throw NoSuchKeyFoundException();
+			}
 
 			// Change index of page to 0 to reflect first element in node
 			this->nextEntry = 0;
@@ -302,58 +379,51 @@ void BTreeIndex::startScan(const void* lowValParm,
 
 void BTreeIndex::scanNext(RecordId& outRid) {
 
+	if (DEBUG_SCAN) std::cout << "scanNext" << std::endl;
+
 	// Check if scan process has been commenced and initialized 
 	if(!this->scanExecuting){
 		throw ScanNotInitializedException();
 	}
 
 	// Check if scan page has ended
-	if(this-> currentPageNum == Page::INVALID_NUMBER){
+	if(this->currentPageNum == Page::INVALID_NUMBER){
 		throw IndexScanCompletedException();
 	}
 
 	// Cast leaf page to leaf node
 	LeafNodeInt* currentNode = (LeafNodeInt*)this->currentPageData;
 
-	while(true){
 
-		// Check if index of BTree node has reached the end element
-		if(this->nextEntry >= currentNode->sz){
-			
-			// Unpin previously read node page
-			this->bufMgr->unPinPage(this->file, this->currentPageNum, true);
+	int key = currentNode->keyArray[this->nextEntry];
 
-			// Checks if neighboring pageId node has no more key to traverse
-			if(currentNode->rightSibPageNo == Page::INVALID_NUMBER){
-				return;
-			}
-			// Retrieve neighboring sibling pageId using singly-linked pointer
-			this->currentPageNum = currentNode->rightSibPageNo;
+	if (DEBUG_SCAN) {
+		std::cout << "--------------------" << std::endl;
+		std::cout << "| currentPageNum: " << this->currentPageNum << std::endl;
+		std::cout << "| nextEntry: " << this->nextEntry << std::endl;
+		std::cout << "| key: " << key << std::endl;
+		std::cout << "--------------------" << std::endl;
+	}
 
-			// Change index of page to 0 to reflect first element in node
+	// Check if range of scan exceeded
+	if (key > this->highValInt) {
+		this->bufMgr->unPinPage(this->file, this->currentPageNum, true);
+		this->currentPageNum = Page::INVALID_NUMBER;
+		throw IndexScanCompletedException();
+	}
+
+	// Obtain record in page
+	outRid = currentNode->ridArray[this->nextEntry];
+	this->nextEntry += 1;
+
+	// If exhausted all records, move to sibling
+	if (this->nextEntry >= currentNode->sz) {
+		this->bufMgr->unPinPage(this->file, this->currentPageNum, true);
+		this->currentPageNum = currentNode->rightSibPageNo;
+		// If sibling is not empty, reset counter and read new page
+		if (this->currentPageNum != Page::INVALID_NUMBER) {
 			this->nextEntry = 0;
-			
-			// Reads new subsequent leaf node page
 			this->bufMgr->readPage(this->file, this->currentPageNum, this->currentPageData);
-
-		// Checks if element scanned is smaller than required range
-		}else if(this->lowValInt > currentNode->keyArray[this->nextEntry]){
-
-			// Move to subsequent elements, as key is still not in range
-			this->nextEntry++;
-
-		// Check if range of scan exceeded
-		}else if(this->highValInt < currentNode->keyArray[this->nextEntry]){
-			
-			// Terminate search 
-			this->bufMgr->unPinPage(this->file, this->currentPageNum, true);
-			this->currentPageNum = Page::INVALID_NUMBER;
-			return;
-
-		}else{
-			// Obtain the record in page
-			outRid = currentNode->ridArray[this->nextEntry++];
-			return;
 		}
 	}
 }
@@ -371,7 +441,7 @@ void BTreeIndex::endScan() {
 	// handles if currentPageNum is not invalid
 	if (this->currentPageNum != Page::INVALID_NUMBER){
 		this->bufMgr->unPinPage(this->file, this->currentPageNum, true);
-        this->currentPageNum = Page::INVALID_NUMBER;
+    this->currentPageNum = Page::INVALID_NUMBER;
 	}
 
 	// updates scanExecuting
@@ -388,6 +458,12 @@ int BTreeIndex::lowerBound(T *node, int key) {
 
 std::pair<int, PageId> BTreeIndex::insert(int level, PageId pageNo, int key, RecordId rid) {
 
+	if (DEBUG) std::cout << "-----------------" << std::endl;
+	if (DEBUG) std::cout << "|  insert       " << std::endl;
+	if (DEBUG) std::cout << "|  level: " << level << std::endl;
+	if (DEBUG) std::cout << "|  pageNo: " << pageNo << std::endl;
+	if (DEBUG) std::cout << "-----------------" << std::endl;
+
 	std::pair<int, PageId> passUp;
 	
 	// read this page
@@ -399,17 +475,21 @@ std::pair<int, PageId> BTreeIndex::insert(int level, PageId pageNo, int key, Rec
 
 		LeafNodeInt *node = (LeafNodeInt*)page;
 
+		if (DEBUG) std::cout << "\tinsert at leaf" << std::endl;
+
 		// key already exist, replace record id
 		int idx = this->lowerBound(node, key);
 		if (idx < node->sz && node->keyArray[idx] == key) {
 			node->ridArray[idx] = rid;
-			passUp = {-1, -1};
+			passUp.first = -1;
+			passUp.second = Page::INVALID_NUMBER;
 		}
 
 		// enough space, insert in leaf
-		if (node->sz + 1 <= this->leafOccupancy) {
+		else if (node->sz + 1 <= this->leafOccupancy) {
 			this->insertEntryLeaf(node, key, rid);
-			passUp = {-1, -1};
+			passUp.first = -1;
+			passUp.second = Page::INVALID_NUMBER;
 		}
 
 		// split leaf node
@@ -421,6 +501,7 @@ std::pair<int, PageId> BTreeIndex::insert(int level, PageId pageNo, int key, Rec
 			// pass up middle key and page no
 			passUp = {retKey, retPageNo};
 		}
+
 	}
 	
 	// internal node
@@ -433,22 +514,28 @@ std::pair<int, PageId> BTreeIndex::insert(int level, PageId pageNo, int key, Rec
 		int nextPageNo = node->pageNoArray[idx];
 
 		// retrieve copied middle key
-		auto [newKey, newPageNo] = this->insert(level + 1, nextPageNo, key, rid);
+		std::pair<int, PageId> ret = this->insert(level + 1, nextPageNo, key, rid);
+		int newKey = ret.first;
+		PageId newPageNo = ret.second;
 
 		// skip new add
-		if (newKey == -1 && newPageNo == -1) passUp = {-1, -1};
+		if (newKey == -1 && newPageNo == Page::INVALID_NUMBER) {
+			passUp.first = -1;
+			passUp.second = Page::INVALID_NUMBER;
+		}
 
 		// enough space, insert in leaf
-		if (node->sz + 1 <= this->nodeOccupancy) {
-			insertEntryNonLeaf(node, newKey, newPageNo);
-			passUp = {-1, -1};
+		else if (node->sz + 1 <= this->nodeOccupancy) {
+			this->insertEntryNonLeaf(node, newKey, newPageNo);
+			passUp.first = -1;
+			passUp.second = Page::INVALID_NUMBER;
 		}
 
 		// split leaf node
 		else {
 			int retKey;
 			PageId retPageNo;
-			splitNonLeafNode(node, key, newPageNo, retKey, retPageNo);
+			this->splitNonLeafNode(node, key, newPageNo, retKey, retPageNo);
 
 			// pass up middle key and page no
 			passUp = {retKey, retPageNo};
@@ -458,10 +545,14 @@ std::pair<int, PageId> BTreeIndex::insert(int level, PageId pageNo, int key, Rec
 	// unpin this page
 	this->bufMgr->unPinPage(this->file, pageNo, true);
 
+	if (DEBUG) std::cout << "passUp = " << passUp.first << ", " << passUp.second << std::endl;
+
 	return passUp;
 }
 
 void BTreeIndex::insertEntryLeaf(LeafNodeInt *node, int key, RecordId rid) {
+
+	// if (DEBUG) std::cout << "---- insertEntryLeaf ----" << std::endl;
 
 	node->keyArray[node->sz] = key;
 	node->ridArray[node->sz] = rid;
@@ -473,6 +564,9 @@ void BTreeIndex::insertEntryLeaf(LeafNodeInt *node, int key, RecordId rid) {
 		std::swap(node->keyArray[idx], node->keyArray[idx-1]);
 		std::swap(node->ridArray[idx], node->ridArray[idx-1]);
 	}
+
+	// if (DEBUG) std::cout << "-------------------------" << std::endl;
+
 }
 
 void BTreeIndex::insertEntryNonLeaf(NonLeafNodeInt *node, int key, PageId pageNo) {
@@ -561,7 +655,7 @@ void BTreeIndex::initLeafNode(LeafNodeInt *node) {
 
 void BTreeIndex::initNonLeafNode(NonLeafNodeInt *node) {
 	node->sz = 0;
-	node->level = 0;
+	node->level = Page::INVALID_NUMBER;
 }
 
 }
