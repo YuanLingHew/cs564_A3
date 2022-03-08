@@ -76,9 +76,11 @@ void test3();
 void test4_CreateBigRelationForward();
 void test5_CreateBigRelationBackward();
 void test6_CreateBigRelationRandom();
-void test7_boundTest_Forward();
-void test8_boundTest_Backward();
-void test9_boundTest_Random();
+void test7_BoundTest_Forward();
+void test8_BoundTest_Backward();
+void test9_BoundTest_Random();
+void test10_3000_Random();
+void test11_ReopenIndex();
 void errorTests();
 void deleteRelation();
 
@@ -146,13 +148,15 @@ int main(int argc, char **argv)
 	test3();
 	errorTests();
 
-	test4_CreateBigRelationForward();
-	test5_CreateBigRelationBackward();
-	test6_CreateBigRelationRandom();
+	// test4_CreateBigRelationForward();
+	// test5_CreateBigRelationBackward();
+	// test6_CreateBigRelationRandom();
 
-	test7_boundTest_Forward();
-	test8_boundTest_Backward();
-	test9_boundTest_Random();
+	test7_BoundTest_Forward();
+	test8_BoundTest_Backward();
+	test9_BoundTest_Random();
+
+	test10_3000_Random();
 
 	delete bufMgr;
 
@@ -194,55 +198,61 @@ void test3()
 
 void test4_CreateBigRelationForward() {
 	std::cout << "----------------------" << std::endl;
-	std::cout << "Test 4: createBigRelationForward" << std::endl;
-	createRelationForward(100000);
-	indexTests(100000);
+	std::cout << "Test 4: CreateBigRelationForward" << std::endl;
+	createRelationForward(470000);
+	indexTests(470000);
 	deleteRelation();
 }
 
 void test5_CreateBigRelationBackward() {
 	std::cout << "----------------------" << std::endl;
-	std::cout << "Test 5: createBigRelationBackward" << std::endl;
-	createRelationBackward(100000);
-	indexTests(100000);
+	std::cout << "Test 5: CreateBigRelationBackward" << std::endl;
+	createRelationBackward(470000);
+	indexTests(470000);
 	deleteRelation();
 }
 
 void test6_CreateBigRelationRandom() {
 	std::cout << "----------------------" << std::endl;
-	std::cout << "Test 6: createBigRelationRandom" << std::endl;
-	createRelationRandom(400000);
-	indexTests(400000);
+	std::cout << "Test 6: CreateBigRelationRandom" << std::endl;
+	createRelationRandom(470000);
+	indexTests(470000);
 	deleteRelation();
 }
 
-void test7_boundTest_Forward()
+void test7_BoundTest_Forward()
 {
   std::cout << "--------------------" << std::endl;
-	std::cout << "Test 7: boundTest_Forward" << std::endl;
+	std::cout << "Test 7: BoundTest_Forward" << std::endl;
   createRelationForward(5000);
   boundaryTests();
   deleteRelation();
 }
 
-void test8_boundTest_Backward()
+void test8_BoundTest_Backward()
 {
 	std::cout << "--------------------" << std::endl;
-	std::cout << "Test 8: boundTest_Backward" << std::endl;
+	std::cout << "Test 8: BoundTest_Backward" << std::endl;
   createRelationBackward(5000);
   boundaryTests();
   deleteRelation();
 }
 
-void test9_boundTest_Random()
+void test9_BoundTest_Random()
 {
-  // Create a relation with tuples valued 0 to relationSize in random order and perform boundary tests 
-	// on attributes of all three types (int, double, string)
   std::cout << "--------------------" << std::endl;
-	std::cout << "Test 9: boundTest_Random" << std::endl;
+	std::cout << "Test 9: BoundTest_Random" << std::endl;
   createRelationRandom(5000);
   boundaryTests();
   deleteRelation();
+}
+
+void test10_3000_Random() {
+	std::cout << "--------------------" << std::endl;
+	std::cout << "Test 10: 3000_Random" << std::endl;
+	createRelationRandom(3000);
+	indexTests(3000);
+	deleteRelation();
 }
 
 // -----------------------------------------------------------------------------
@@ -318,6 +328,7 @@ void createRelationBackward(int relationSize)
   // Insert a bunch of tuples into the relation.
   for(int i = relationSize - 1; i >= 0; i-- )
 	{
+		if (i % 10000 == 0) std::cout << "i = " << i << std::endl;
     sprintf(record1.s, "%05d string record", i);
     record1.i = i;
     record1.d = i;
@@ -376,7 +387,6 @@ void createRelationRandom(int relationSize)
 	int i = 0;
   while( i < relationSize )
   {
-		if (i % 10000 == 0) std::cout << "i = " << i << std::endl;
     pos = random() % (relationSize-i);
     val = intvec[pos];
     sprintf(record1.s, "%05d string record", val);
@@ -456,7 +466,7 @@ void intTests(int relationSize)
 	checkPassFail(intScan(&index,996,GT,1001,LT), 4)
 	checkPassFail(intScan(&index,0,GT,1,LT), 0)
 	checkPassFail(intScan(&index,300,GT,400,LT), 99)
-	checkPassFail(intScan(&index,3000,GTE,4000,LT), 1000)
+	if (relationSize >= 4000) checkPassFail(intScan(&index,3000,GTE,4000,LT), 1000)
 	checkPassFail(intScan(&index,0,GTE,relationSize,LT), relationSize);
 }
 

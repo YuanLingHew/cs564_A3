@@ -33,6 +33,7 @@ BTreeIndex::BTreeIndex(const std::string & relationName, std::string & outIndexN
 
 	// create new index file if doesn't exist
 	bool exist = File::exists(outIndexName);
+
 	BlobFile *indexFile = new BlobFile(outIndexName, !exist);
 
 	// attribute declaration
@@ -57,7 +58,7 @@ BTreeIndex::BTreeIndex(const std::string & relationName, std::string & outIndexN
 		// checks if it matches meta page
 		IndexMetaInfo *indexMetaInf = (IndexMetaInfo*)headerPage;
 		if(strcmp(indexMetaInf->relationName, relationName.c_str()) != 0 || indexMetaInf->attrByteOffset != this->attrByteOffset || indexMetaInf->attrType != this->attributeType){
-				throw BadIndexInfoException("File already exists for the corresponding attribute, but values in metapage(relationName, attribute byte offset, attribute type etc.) do not match with values received through constructor parameters.");
+			throw BadIndexInfoException("File already exists for the corresponding attribute, but values in metapage(relationName, attribute byte offset, attribute type etc.) do not match with values received through constructor parameters.");
 		}
 
 		// updates attribute based on meta page
@@ -69,6 +70,7 @@ BTreeIndex::BTreeIndex(const std::string & relationName, std::string & outIndexN
 
 	// if index file does not exist, alloc
 	else {
+
 		Page *headerPage;
 		// allocates page
 		this->bufMgr->allocPage(this->file, this->headerPageNum, headerPage);
@@ -460,8 +462,6 @@ void BTreeIndex::splitLeafNode(LeafNodeInt *node, int key, RecordId rid, int &re
 // -----------------------------------------------------------------------------
 
 void BTreeIndex::splitNonLeafNode(NonLeafNodeInt *node, int key, PageId pageNo, int &retKey, PageId &retPageNo) {
-
-	std::cout << "splitNonLeafNode" << std::endl;
 
 	// allocate new page
 	Page *newPage;
