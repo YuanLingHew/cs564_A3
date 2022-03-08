@@ -306,6 +306,93 @@ class BTreeIndex {
    */
   int     height;
 
+  /**
+   * Helper method to insert new key and record Id into the B+ tree
+   * at the node with specific page number
+   *
+   * @param level     Depth of the node
+   * @param pageNo    Page number of the node 
+   * @param key       Key to insert, integer
+   * @param rid       Record ID associated with key
+   * @returns Pair of key and record ID of the new node if we have to split otherwise
+   *          returns {-1, Page::INVALID_NUMBER}
+   */
+  std::pair<int, PageId> insert(int level, PageId pageNo, int key, RecordId rid);
+
+  /**
+   * Add new entry into the leaf node in a correct position
+   *
+   * @param node      The node to be inserted
+   * @param key       Key to insert, integer
+   * @param rid       Record ID associated with key
+   */
+  void insertEntryLeaf(LeafNodeInt *node, int key, RecordId rid);
+
+  /**
+   * Add new entry into the internal node in a correct position
+   *
+   * @param node      The node to be inserted
+   * @param key       Key to insert, integer
+   * @param rid       Record ID associated with key
+   */
+  void insertEntryNonLeaf(NonLeafNodeInt *node, int key, PageId pageNo);
+
+  /**
+   * Split the leaf node into two nodes and pass back the middle 
+   * key and page number to insert back into the parent node
+   *
+   * @param node        The node to be inserted
+   * @param key         Key to insert, integer
+   * @param rid         Record ID associated with key
+   * @param retKey      Returning key
+   * @param retPageNo   Returning page number
+   */
+  void splitLeafNode(LeafNodeInt *node, int key, RecordId rid, int &retKey, PageId &retPageNo);
+
+  /**
+   * Split the internal node into two nodes and pass back the middle 
+   * key and page number to insert back into the parent node
+   *
+   * @param node        The node to be inserted
+   * @param key         Key to insert, integer
+   * @param rid         Record ID associated with key
+   * @param retKey      Returning key
+   * @param retPageNo   Returning page number
+   */
+  void splitNonLeafNode(NonLeafNodeInt *node, int key, PageId pageNo, int &retKey, PageId &retPageNo);
+
+  /**
+   * Initialize new leaf node
+   *
+   * @param node      The node to be inserted
+   */
+  void initLeafNode(LeafNodeInt *node);
+
+  /**
+   * Initialize new internal node
+   *
+   * @param node      The node to be inserted
+   */
+  void initNonLeafNode(NonLeafNodeInt *node);
+  
+  /**
+   * Traverse the B+ tree to find the leaf to start the scan 
+   * according to the key
+   *
+   * @param rootPageId  The node to be inserted
+   * @param key         Key to search
+   * @param leafPageId  Returning leaf page id
+   */
+  void traverseTreeToLeafHelper(PageId rootPageId, const void* key, PageId &leafPageId);
+
+  /**
+   * Find the index of the lower bound key in this node
+   *
+   * @param node    The node to be inserted
+   * @param key     Key to search
+   */
+  template <class T>
+  int lowerBound(T *node, int key);
 	
  public:
 
@@ -378,23 +465,6 @@ class BTreeIndex {
 	 * @throws ScanNotInitializedException If no scan has been initialized.
 	**/
 	void endScan();
-
-  // ----------------------------------------------------------------------------------------------------
-  template <class T>
-  int lowerBound(T *node, int key);
-
-  std::pair<int, PageId> insert(int level, PageId pageNo, int key, RecordId rid);
-
-  void insertEntryLeaf(LeafNodeInt *node, int key, RecordId rid);
-  void insertEntryNonLeaf(NonLeafNodeInt *node, int key, PageId pageNo);
-  void splitLeafNode(LeafNodeInt *node, int key, RecordId rid, int &retKey, PageId &retPageNo);
-  void splitNonLeafNode(NonLeafNodeInt *node, int key, PageId pageNo, int &retKey, PageId &retPageNo);
-  void initLeafNode(LeafNodeInt *node);
-  void initNonLeafNode(NonLeafNodeInt *node);
-
-  void traverseTreeToLeafHelper(PageId rootPageId, const void* key, PageId &leafPageId);
-
-  void traverse(int level, PageId pageNo);
 
 };
 

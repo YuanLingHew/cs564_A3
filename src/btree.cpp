@@ -16,9 +16,6 @@
 #include "exceptions/file_not_found_exception.h"
 #include "exceptions/end_of_file_exception.h"
 
-int DEBUG = 0;
-int SHOW = 0;
-int DEBUG_SCAN = 0;
 
 // #define DEBUG
 
@@ -27,7 +24,6 @@ namespace badgerdb {
 // -----------------------------------------------------------------------------
 // BTreeIndex::BTreeIndex -- Constructor
 // -----------------------------------------------------------------------------
-
 BTreeIndex::BTreeIndex(const std::string & relationName, std::string & outIndexName,
 											 BufMgr *bufMgrIn, const int attrByteOffset, const Datatype attrType) {
 
@@ -72,54 +68,55 @@ BTreeIndex::BTreeIndex(const std::string & relationName, std::string & outIndexN
 	}
 
 	// if index file does not exist, alloc
-	Page *headerPage;
-	// allocates page
-	this->bufMgr->allocPage(this->file, this->headerPageNum, headerPage);
+	else {
+		Page *headerPage;
+		// allocates page
+		this->bufMgr->allocPage(this->file, this->headerPageNum, headerPage);
 
-	// set up meta/header page
-	IndexMetaInfo *indexMetaInf = (IndexMetaInfo*)headerPage;
-	strcpy(indexMetaInf->relationName, relationName.c_str());
-	indexMetaInf->attrByteOffset = attrByteOffset;
-	indexMetaInf->attrType = attrType;
+		// set up meta/header page
+		IndexMetaInfo *indexMetaInf = (IndexMetaInfo*)headerPage;
+		strcpy(indexMetaInf->relationName, relationName.c_str());
+		indexMetaInf->attrByteOffset = attrByteOffset;
+		indexMetaInf->attrType = attrType;
 
-	// initializes root
-	Page *root;
-	this->bufMgr->allocPage(this->file, this->rootPageNum, root);
-	indexMetaInf->rootPageNo = this->rootPageNum;
-	
-	LeafNodeInt *rootNode = (LeafNodeInt*)root;
-	rootNode->sz = 0;
-	rootNode->rightSibPageNo = Page::INVALID_NUMBER;
+		// initializes root
+		Page *root;
+		this->bufMgr->allocPage(this->file, this->rootPageNum, root);
+		indexMetaInf->rootPageNo = this->rootPageNum;
+		
+		LeafNodeInt *rootNode = (LeafNodeInt*)root;
+		rootNode->sz = 0;
+		rootNode->rightSibPageNo = Page::INVALID_NUMBER;
 
-	// unpinning
-	this->bufMgr->unPinPage(this->file, this->headerPageNum, true);
-	this->bufMgr->unPinPage(this->file, this->rootPageNum, true); 
+		// unpinning
+		this->bufMgr->unPinPage(this->file, this->headerPageNum, true);
+		this->bufMgr->unPinPage(this->file, this->rootPageNum, true); 
 
-	// fill in the tree
-	FileScan *scanner = new FileScan(relationName, bufMgr);
-	try{
-		// iterate through all files till the end
-		while(true){
-			// get rID
-			RecordId rid;
-			scanner->scanNext(rid);
-			std::string record = scanner->getRecord();
+		// fill in the tree
+		FileScan *scanner = new FileScan(relationName, bufMgr);
+		try{
+			// iterate through all files till the end
+			while(true){
+				// get rID
+				RecordId rid;
+				scanner->scanNext(rid);
+				std::string record = scanner->getRecord();
 
-			// initialize key
-			int key = *((int*)(record.c_str() + attrByteOffset));
-			
-			// insert entry
-			this->insertEntry(&key, rid);
+				// initialize key
+				int key = *((int*)(record.c_str() + attrByteOffset));
+				
+				// insert entry
+				this->insertEntry(&key, rid);
+			}
 		}
+		catch(EndOfFileException e){};
+		delete scanner;
 	}
-	catch(EndOfFileException e){};
-	delete scanner;
 }
 
 // -----------------------------------------------------------------------------
-// BTreeIndex::~BTreeIndex -- destructor
+// BTreeIndex::~BTreeIndex -- Destructor
 // -----------------------------------------------------------------------------
-
 BTreeIndex::~BTreeIndex() {
 	// if index scan has been started
 	if (this->scanExecuting){
@@ -131,7 +128,7 @@ BTreeIndex::~BTreeIndex() {
 }
 
 // -----------------------------------------------------------------------------
-// BTreeIndex::insertEntry
+// BTreeIndex::insertEntry -- Insert new entry
 // -----------------------------------------------------------------------------
 
 void BTreeIndex::insertEntry(const void *key, const RecordId rid) {
@@ -155,7 +152,7 @@ void BTreeIndex::insertEntry(const void *key, const RecordId rid) {
 	node->pageNoArray[0] = this->rootPageNum;
 	node->pageNoArray[1] = newPageNo;
 
-	// update attrs.
+	// update attrs
 	this->height += 1;
 	this->rootPageNum = pageNo;
 
@@ -171,61 +168,20 @@ void BTreeIndex::insertEntry(const void *key, const RecordId rid) {
 }
 
 // -----------------------------------------------------------------------------
-// traverseTreeToLeaf helper function
-// -----------------------------------------------------------------------------
-void BTreeIndex::traverseTreeToLeafHelper(PageId rootPageId, const void* key, PageId &leafPageId){
-
-	// cast key
-	int intKey = *((int*) key);
-
-	PageId currentPageId = rootPageId, lastPageId;
-
-	// Tracks the level of tree
-	for(int level = 0; level < this->height; level++){
-
-		// Retrieve page instance from pageId
-		Page* currentPage;
-		this->bufMgr->readPage(this->file, currentPageId, currentPage);
-
-		// Tracks pageId at the previous level to be unpinned after reading
-		lastPageId = currentPageId;
-
-		// Cast regular page to a non leaf node
-		NonLeafNodeInt *currentNode = (NonLeafNodeInt*) currentPage;
-		
-		// Retrieve the index where pageId lies
-		int index = this->lowerBound(currentNode, intKey);
-
-		// Access pageId from non-leaf node pageId array
-		currentPageId = currentNode->pageNoArray[index];
-
-		// Unpins read pageId in the previous BTree level
-		this->bufMgr->unPinPage(this->file, lastPageId, true);
-	}
-
-	// Return leaf page by reference
-	leafPageId = currentPageId;
-	
-}
-
-
-// -----------------------------------------------------------------------------
-// BTreeIndex::startScan
+// BTreeIndex::startScan -- Begin a filtered scan
 // -----------------------------------------------------------------------------
 
-void BTreeIndex::startScan(const void* lowValParm,
-	const Operator lowOpParm,
-	const void* highValParm,
-	const Operator highOpParm) {
+void BTreeIndex::startScan(const void* lowValParm, const Operator lowOpParm,
+													 const void* highValParm, const Operator highOpParm) {
 
 	// Check if operator used to test the high and low range is valid
 	if ((lowOpParm != GT && lowOpParm != GTE) || (highOpParm != LT && highOpParm != LTE)) {
-			throw BadOpcodesException();
+		throw BadOpcodesException();
 	}
 
 	// Check if lowValue > highValue
 	if(*((int*)lowValParm) > *((int*)highValParm)){
-			throw BadScanrangeException();
+		throw BadScanrangeException();
 	}
 
 	// Set member variables of BTree
@@ -249,6 +205,7 @@ void BTreeIndex::startScan(const void* lowValParm,
 	LeafNodeInt* currentNode = (LeafNodeInt*)this->currentPageData;
 	this->nextEntry = this->lowerBound(currentNode, lowValInt);
 
+	// If the node does not contain first entry, no such key is found
 	if (this->nextEntry == currentNode->sz) {
 		this->bufMgr->unPinPage(this->file, this->currentPageNum, true);
 		this->currentPageNum = Page::INVALID_NUMBER;
@@ -258,7 +215,7 @@ void BTreeIndex::startScan(const void* lowValParm,
 }
 
 // -----------------------------------------------------------------------------
-// BTreeIndex::scanNext
+// BTreeIndex::scanNext -- Fetch the record id of the next index entry
 // -----------------------------------------------------------------------------
 
 void BTreeIndex::scanNext(RecordId& outRid) {
@@ -302,9 +259,9 @@ void BTreeIndex::scanNext(RecordId& outRid) {
 }
 
 // -----------------------------------------------------------------------------
-// BTreeIndex::endScan
+// BTreeIndex::endScan -- Terminate the current scan
 // -----------------------------------------------------------------------------
-//
+
 void BTreeIndex::endScan() {
 	// if scan hasn't been started
 	if (!this->scanExecuting){
@@ -321,6 +278,9 @@ void BTreeIndex::endScan() {
 	this->scanExecuting = false;
 }
 
+// -----------------------------------------------------------------------------
+// BTreeIndex::lowerBound -- Find the lower bound key
+// -----------------------------------------------------------------------------
 template <class T>
 int BTreeIndex::lowerBound(T *node, int key) {
 	for (int i = 0; i < node->sz; i++) {
@@ -328,6 +288,10 @@ int BTreeIndex::lowerBound(T *node, int key) {
 	}
 	return node->sz;
 }
+
+// -----------------------------------------------------------------------------
+// BTreeIndex::insert -- Insert new key and record id into the tree
+// -----------------------------------------------------------------------------
 
 std::pair<int, PageId> BTreeIndex::insert(int level, PageId pageNo, int key, RecordId rid) {
 
@@ -413,6 +377,10 @@ std::pair<int, PageId> BTreeIndex::insert(int level, PageId pageNo, int key, Rec
 	return passUp;
 }
 
+// -----------------------------------------------------------------------------
+// BTreeIndex::insertEntryLeaf -- Add new entry into the leaf node
+// -----------------------------------------------------------------------------
+
 void BTreeIndex::insertEntryLeaf(LeafNodeInt *node, int key, RecordId rid) {
 
 	node->keyArray[node->sz] = key;
@@ -426,8 +394,11 @@ void BTreeIndex::insertEntryLeaf(LeafNodeInt *node, int key, RecordId rid) {
 		std::swap(node->ridArray[idx], node->ridArray[idx-1]);
 		idx -= 1;
 	}
-
 }
+
+// -----------------------------------------------------------------------------
+// BTreeIndex::insertEntryNonLeaf -- Add new entry into the internal node
+// -----------------------------------------------------------------------------
 
 void BTreeIndex::insertEntryNonLeaf(NonLeafNodeInt *node, int key, PageId pageNo) {
 
@@ -443,6 +414,10 @@ void BTreeIndex::insertEntryNonLeaf(NonLeafNodeInt *node, int key, PageId pageNo
 		idx -= 1;
 	}
 }
+
+// -----------------------------------------------------------------------------
+// BTreeIndex::splitLeafNode -- Split the leaf node into two nodes
+// -----------------------------------------------------------------------------
 
 void BTreeIndex::splitLeafNode(LeafNodeInt *node, int key, RecordId rid, int &retKey, PageId &retPageNo) {
 
@@ -480,6 +455,10 @@ void BTreeIndex::splitLeafNode(LeafNodeInt *node, int key, RecordId rid, int &re
 	this->bufMgr->unPinPage(this->file, newPageNo, true);
 }
 
+// -----------------------------------------------------------------------------
+// BTreeIndex::splitNonLeafNode -- Split the internal node into two nodes
+// -----------------------------------------------------------------------------
+
 void BTreeIndex::splitNonLeafNode(NonLeafNodeInt *node, int key, PageId pageNo, int &retKey, PageId &retPageNo) {
 
 	// allocate new page
@@ -515,14 +494,60 @@ void BTreeIndex::splitNonLeafNode(NonLeafNodeInt *node, int key, PageId pageNo, 
 	this->bufMgr->unPinPage(this->file, newPageNo, true);
 }
 
+// -----------------------------------------------------------------------------
+// BTreeIndex::initLeafNode -- Initialize new leaf node
+// -----------------------------------------------------------------------------
+
 void BTreeIndex::initLeafNode(LeafNodeInt *node) {
 	node->sz = 0;
 	node->rightSibPageNo = Page::INVALID_NUMBER;
 }
 
+// -----------------------------------------------------------------------------
+// BTreeIndex::initNonLeafNode -- Initialize new internal node
+// -----------------------------------------------------------------------------
+
 void BTreeIndex::initNonLeafNode(NonLeafNodeInt *node) {
 	node->sz = 0;
 	node->level = Page::INVALID_NUMBER;
+}
+
+// -----------------------------------------------------------------------------
+// traverseTreeToLeaf helper function -- Find the lower bound leaf
+// -----------------------------------------------------------------------------
+
+void BTreeIndex::traverseTreeToLeafHelper(PageId rootPageId, const void* key, PageId &leafPageId){
+
+	// cast key
+	int intKey = *((int*) key);
+
+	PageId currentPageId = rootPageId, lastPageId;
+
+	// Tracks the level of tree
+	for(int level = 0; level < this->height; level++){
+
+		// Retrieve page instance from pageId
+		Page* currentPage;
+		this->bufMgr->readPage(this->file, currentPageId, currentPage);
+
+		// Tracks pageId at the previous level to be unpinned after reading
+		lastPageId = currentPageId;
+
+		// Cast regular page to a non leaf node
+		NonLeafNodeInt *currentNode = (NonLeafNodeInt*) currentPage;
+		
+		// Retrieve the index where pageId lies
+		int index = this->lowerBound(currentNode, intKey);
+
+		// Access pageId from non-leaf node pageId array
+		currentPageId = currentNode->pageNoArray[index];
+
+		// Unpins read pageId in the previous BTree level
+		this->bufMgr->unPinPage(this->file, lastPageId, true);
+	}
+
+	// Return leaf page by reference
+	leafPageId = currentPageId;
 }
 
 }
