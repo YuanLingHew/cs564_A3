@@ -27,8 +27,6 @@ namespace badgerdb {
 BTreeIndex::BTreeIndex(const std::string & relationName, std::string & outIndexName,
 											 BufMgr *bufMgrIn, const int attrByteOffset, const Datatype attrType) {
 
-	std::cout << relationName << " " << attrByteOffset << " " << (int)attrType << std::endl;
-
 	std::ostringstream idxStr;
 	idxStr << relationName << '.' << attrByteOffset;
 	outIndexName = idxStr.str();

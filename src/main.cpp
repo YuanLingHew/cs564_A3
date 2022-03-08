@@ -64,12 +64,14 @@ BufMgr * bufMgr = new BufMgr(100);
 
 void createRelationForward(int relationSize);
 void createRelationBackward(int relationSize);
-void createRelationRandom(int relationSize);
+void createRelationRandom(int relationSize, int isSparse = 0);
 int intScan(BTreeIndex *index, int lowVal, Operator lowOp, int highVal, Operator highOp);
 void indexTests(int relationSize);
 void boundaryTests();
+void sparseyTests(int relationSize);
 void intTests(int relationSize);
 void boundTests();
+void sparseTests(int relationSize);
 void test1();
 void test2();
 void test3();
@@ -79,7 +81,7 @@ void test6_CreateBigRelationRandom();
 void test7_BoundTest_Forward();
 void test8_BoundTest_Backward();
 void test9_BoundTest_Random();
-void test10_3000_Random();
+void test10_3000_Sparse();
 void test11_ReopenIndex();
 void errorTests();
 void deleteRelation();
@@ -156,7 +158,7 @@ int main(int argc, char **argv)
 	test8_BoundTest_Backward();
 	test9_BoundTest_Random();
 
-	test10_3000_Random();
+	test10_3000_Sparse();
 	test11_ReopenIndex();
 
 	delete bufMgr;
@@ -248,32 +250,23 @@ void test9_BoundTest_Random()
   deleteRelation();
 }
 
-void test10_3000_Random() {
+void test10_3000_Sparse() {
 	std::cout << "--------------------" << std::endl;
-	std::cout << "Test 10: 3000_Random" << std::endl;
-	createRelationRandom(3000);
-	indexTests(3000);
+	std::cout << "Test 10: 3000_Sparse" << std::endl;
+	createRelationRandom(3000, 1);
+	sparseyTests(3000);
 	deleteRelation();
 }
 
 void test11_ReopenIndex() {
 	std::cout << "--------------------" << std::endl;
 	std::cout << "Test 11: Reopen Index" << std::endl;
-  std::cout << "Create a B+ Tree index on the integer field" << std::endl;
 
-	createRelationForward(5000);
-
-  BTreeIndex index(relationName, intIndexName, bufMgr, offsetof(tuple,i), INTEGER);
-
-	// run some tests
-	checkPassFail(intScan(&index,25,GT,40,LT), 14)
-	checkPassFail(intScan(&index,20,GTE,35,LTE), 16)
-	checkPassFail(intScan(&index,-3,GT,3,LT), 3)
-	checkPassFail(intScan(&index,996,GT,1001,LT), 4)
-	checkPassFail(intScan(&index,0,GT,1,LT), 0)
-	checkPassFail(intScan(&index,300,GT,400,LT), 99)
-
-	deleteRelation();
+  createRelationRandom(5000);
+  boundaryTests();
+  boundaryTests();
+  boundaryTests();
+  deleteRelation();
 
 }
 
@@ -379,7 +372,7 @@ void createRelationBackward(int relationSize)
 // createRelationRandom
 // -----------------------------------------------------------------------------
 
-void createRelationRandom(int relationSize)
+void createRelationRandom(int relationSize, int isSparse)
 {
   // destroy any old copies of relation file
 	try
@@ -402,6 +395,7 @@ void createRelationRandom(int relationSize)
   for( int i = 0; i < relationSize; i++ )
   {
     intvec[i] = i;
+		if (isSparse) intvec[i] = i * i;
   }
 
   long pos;
@@ -473,6 +467,22 @@ void boundaryTests()
 }
 
 // -----------------------------------------------------------------------------
+// sparseTests
+// -----------------------------------------------------------------------------
+
+void sparseyTests(int relationSize)
+{
+  sparseTests(relationSize);
+	try
+	{
+		File::remove(intIndexName);
+	}
+  catch(const FileNotFoundException &e)
+  {
+  }
+}
+
+// -----------------------------------------------------------------------------
 // intTests
 // -----------------------------------------------------------------------------
 
@@ -509,6 +519,18 @@ void boundTests()
   checkPassFail(intScan(&index, -5000, GT, 0, LTE), 1)
   checkPassFail(intScan(&index, -5000, GT, 10, LTE), 11)
   checkPassFail(intScan(&index, -5000, GT, 100, LT), 100)
+}
+
+void sparseTests(int relationSize)
+{
+  std::cout << "Create a B+ Tree index on the integer field" << std::endl;
+  BTreeIndex index(relationName, intIndexName, bufMgr, offsetof(tuple,i), INTEGER);
+
+	// run some tests
+	checkPassFail(intScan(&index,25,GTE,101,LT), 6)
+	checkPassFail(intScan(&index,0,GTE,100,LTE), 11)
+	checkPassFail(intScan(&index,0,GTE,1,LT), 1)
+	checkPassFail(intScan(&index,0,GTE,relationSize*relationSize,LT), relationSize);
 }
 
 int intScan(BTreeIndex * index, int lowVal, Operator lowOp, int highVal, Operator highOp)
