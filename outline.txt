@@ -1,0 +1,3 @@
+Test cases location: CS564_A3/src/main.cpp
+
+Design report location: CS564_A3/
