@@ -177,6 +177,14 @@ void test3()
 	deleteRelation();
 }
 
+void test4_CreateBigRelationForward() {
+	std::cout << "----------------------" << std::endl;
+	std::cout << "createBigRelationForward" << std::endl;
+	createRelationForward();
+	indexTests();
+	deleteRelation();
+}
+
 // -----------------------------------------------------------------------------
 // createRelationForward
 // -----------------------------------------------------------------------------
