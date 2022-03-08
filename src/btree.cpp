@@ -461,6 +461,8 @@ void BTreeIndex::splitLeafNode(LeafNodeInt *node, int key, RecordId rid, int &re
 
 void BTreeIndex::splitNonLeafNode(NonLeafNodeInt *node, int key, PageId pageNo, int &retKey, PageId &retPageNo) {
 
+	std::cout << "splitNonLeafNode" << std::endl;
+
 	// allocate new page
 	Page *newPage;
 	PageId newPageNo;
