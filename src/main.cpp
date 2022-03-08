@@ -148,9 +148,9 @@ int main(int argc, char **argv)
 	test3();
 	errorTests();
 
-	// test4_CreateBigRelationForward();
-	// test5_CreateBigRelationBackward();
-	// test6_CreateBigRelationRandom();
+	test4_CreateBigRelationForward();
+	test5_CreateBigRelationBackward();
+	test6_CreateBigRelationRandom();
 
 	test7_BoundTest_Forward();
 	test8_BoundTest_Backward();
