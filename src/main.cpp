@@ -157,6 +157,7 @@ int main(int argc, char **argv)
 	test9_BoundTest_Random();
 
 	test10_3000_Random();
+	test11_ReopenIndex();
 
 	delete bufMgr;
 
@@ -253,6 +254,27 @@ void test10_3000_Random() {
 	createRelationRandom(3000);
 	indexTests(3000);
 	deleteRelation();
+}
+
+void test11_ReopenIndex() {
+	std::cout << "--------------------" << std::endl;
+	std::cout << "Test 11: Reopen Index" << std::endl;
+  std::cout << "Create a B+ Tree index on the integer field" << std::endl;
+
+	createRelationForward(5000);
+
+  BTreeIndex index(relationName, intIndexName, bufMgr, offsetof(tuple,i), INTEGER);
+
+	// run some tests
+	checkPassFail(intScan(&index,25,GT,40,LT), 14)
+	checkPassFail(intScan(&index,20,GTE,35,LTE), 16)
+	checkPassFail(intScan(&index,-3,GT,3,LT), 3)
+	checkPassFail(intScan(&index,996,GT,1001,LT), 4)
+	checkPassFail(intScan(&index,0,GT,1,LT), 0)
+	checkPassFail(intScan(&index,300,GT,400,LT), 99)
+
+	deleteRelation();
+
 }
 
 // -----------------------------------------------------------------------------
