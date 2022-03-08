@@ -58,7 +58,7 @@ BTreeIndex::BTreeIndex(const std::string & relationName, std::string & outIndexN
 		// checks if it matches meta page
 		IndexMetaInfo *indexMetaInf = (IndexMetaInfo*)headerPage;
 		if(strcmp(indexMetaInf->relationName, relationName.c_str()) != 0 || indexMetaInf->attrByteOffset != this->attrByteOffset || indexMetaInf->attrType != this->attributeType){
-			throw BadIndexInfoException("File already exists for the corresponding attribute, but values in metapage(relationName, attribute byte offset, attribute type etc.) do not match with values received through constructor parameters.");
+			throw BadIndexInfoException("BadIndexInfoException");
 		}
 
 		// updates attribute based on meta page
